@@ -1,0 +1,284 @@
+{
+  "extraction": {
+    "external_entities": [
+      "Customers (KYC Tier 1: wallet limit Rs 10,000; Tier 2: wallet limit Rs 2,00,000)",
+      "Merchants (web portal, nightly bank payouts)",
+      "Support agents (internal admin console: refunds and account unlocks)",
+      "Managers (approve refunds above Rs 5,000)",
+      "Marketing (creates promo codes)",
+      "Payment gateway (card/UPI add money, calls PayLoop webhook)",
+      "KYC partner API (verifies PAN and Aadhaar)",
+      "SMS provider (OTP delivery)",
+      "Merchant's bank (receives payouts)"
+    ],
+    "features": [
+      {
+        "name": "Add money",
+        "steps": [
+          "Customer initiates top-up through the payment gateway",
+          "Customer pays by card or UPI",
+          "Gateway calls PayLoop's webhook to confirm the payment",
+          "Wallet is credited"
+        ],
+        "business_rules": [
+          "Wallet is credited only after gateway confirmation",
+          "Wallet limit depends on KYC tier (Rs 10,000 Tier 1, Rs 2,00,000 Tier 2)"
+        ]
+      },
+      {
+        "name": "Pay merchant",
+        "steps": [
+          "Customer scans merchant QR code",
+          "Customer enters an amount",
+          "Customer confirms with a 4-digit wallet PIN (checked server-side)",
+          "Payment is recorded and wallet is debited"
+        ],
+        "business_rules": [
+          "Payment requires the correct wallet PIN",
+          "Amount is entered by the customer"
+        ]
+      },
+      {
+        "name": "Send money",
+        "steps": [
+          "Customer selects another PayLoop user",
+          "Customer enters an amount",
+          "Transfer is executed between wallets"
+        ],
+        "business_rules": [
+          "Transfers limited to Rs 25,000 per day",
+          "Recipient must be a PayLoop user"
+        ]
+      },
+      {
+        "name": "Promo codes",
+        "steps": [
+          "Marketing creates a code (for example FIRST100)",
+          "Customer applies the code to a payment",
+          "Cashback is credited"
+        ],
+        "business_rules": [
+          "FIRST100 gives Rs 100 cashback on the first payment",
+          "FIRST100 is usable once per user"
+        ]
+      },
+      {
+        "name": "Refunds",
+        "steps": [
+          "Merchant refunds a payment from the portal",
+          "Support agent issues a refund in the admin console",
+          "For agent refunds above Rs 5,000, a manager approves in the admin console",
+          "Refund is processed and the customer wallet is credited"
+        ],
+        "business_rules": [
+          "Support agents can refund up to Rs 5,000 without approval",
+          "Larger refunds need manager approval in the admin console",
+          "Merchants can refund a payment from the portal"
+        ]
+      },
+      {
+        "name": "Nightly settlement",
+        "steps": [
+          "Batch job totals each merchant's payments minus refunds",
+          "Payout is sent to the merchant's bank account"
+        ],
+        "business_rules": [
+          "Payout equals payments minus refunds per merchant",
+          "Payouts run every night"
+        ]
+      },
+      {
+        "name": "Transaction history and statements",
+        "steps": [
+          "Customer requests transaction history or a monthly statement",
+          "System generates and returns the history or PDF"
+        ],
+        "business_rules": [
+          "Statements are monthly and downloadable as PDF"
+        ]
+      },
+      {
+        "name": "KYC upgrade and signup",
+        "steps": [
+          "Customer signs up with mobile number and OTP",
+          "Customer uploads PAN and Aadhaar",
+          "KYC partner API verifies documents",
+          "Customer moves to Tier 2"
+        ],
+        "business_rules": [
+          "Customers start at Tier 1",
+          "Tier 2 requires partner-verified PAN and Aadhaar"
+        ]
+      }
+    ],
+    "sensitive_data": [
+      "Mobile numbers",
+      "PAN and Aadhaar documents",
+      "Wallet PIN",
+      "Wallet balances and transaction history",
+      "Merchant bank account details",
+      "Monthly PDF statements"
+    ],
+    "stated_controls": [
+      "REST API behind an API gateway on AWS",
+      "JWTs expiring after 24 hours",
+      "Wallet PIN checked on the server",
+      "API gateway rate limit of 100 requests per minute per IP",
+      "TLS 1.2 in transit and AWS KMS encryption at rest",
+      "Separate PostgreSQL database per service (wallet, payments, promotions, refunds, settlement)",
+      "Audit logs for admin console actions only",
+      "Manager approval for agent refunds above Rs 5,000"
+    ],
+    "missing_or_unclear_controls": [
+      "How is the payment gateway webhook authenticated (signature, shared secret, IP allowlist), and is the amount re-verified with the gateway?",
+      "Is the webhook deduplicated by gateway transaction ID?",
+      "Is the Rs 25,000 daily transfer limit enforced server-side and atomically, and how is 'day' defined?",
+      "Are zero, negative, fractional or very large amounts rejected in pay, send and refund?",
+      "Does send money require the wallet PIN?",
+      "Is there a per-account limit on wrong PIN attempts?",
+      "Do merchant refunds check that the payment belongs to the calling merchant and cap cumulative refunds at the original amount?",
+      "Do merchant portal refunds have any approval, limit or logging? Audit logs cover the admin console only",
+      "Is the Rs 5,000 agent threshold per request or cumulative, and is approval enforced in the refunds service API rather than only in the console UI? Can requester and approver be the same person?",
+      "How are cross-service operations (wallet debit, payment record, refund, settlement) kept consistent with a separate database per service?",
+      "Is the settlement job idempotent and how does it handle refunds arriving during a run?",
+      "How is once-per-user FIRST100 eligibility defined (account, mobile number, device) and is there a total promo budget cap?",
+      "Are statement and history endpoints authorised per object (user ID, statement ID, month)?",
+      "Can JWTs be revoked on logout, account lock or device change?",
+      "Is OTP rate-limited per mobile number, with expiry and attempt limits?",
+      "Is the KYC partner result bound to the user and documents, and can the tier change only via a server-side state transition?",
+      "Are merchant payout bank detail changes controlled and logged?"
+    ]
+  },
+  "business_logic_threats": [
+    {
+      "id": "BL01",
+      "category": "Critical transaction integrity",
+      "title": "Forged gateway webhook credits wallet with money that never moved",
+      "affected_feature": "Add money",
+      "workflow_step": "Gateway calls PayLoop's webhook to confirm the payment",
+      "business_rule_violated": "Wallet is credited only after the payment gateway has genuinely confirmed the payment",
+      "attack_scenario": "1) Attacker starts a Rs 10,000 top-up on a Tier 1 account and records the request format and transaction reference. 2) Attacker sends a hand-crafted POST to the PayLoop webhook URL claiming the payment succeeded. 3) Wallet is credited Rs 10,000 with no payment made. 4) Attacker repeats across many accounts, pays a colluding merchant by QR, and cashes out via nightly settlement.",
+      "business_impact": "Unbacked money is created in the ledger. Loss is up to Rs 10,000 per Tier 1 account and Rs 2,00,000 per Tier 2 account, and PayLoop funds the shortfall at settlement. Regulatory exposure for unbacked e-money.",
+      "assumption": "The description does not say how the webhook is authenticated or whether status and amount are re-verified with the gateway.",
+      "severity": "Critical",
+      "mitigation": "Verify the gateway's HMAC signature over the raw body using a secret held in KMS, reject stale timestamps, and fetch payment status and amount from the gateway server-to-server before crediting. Credit only the verified amount against a pending top-up row that PayLoop created."
+    },
+    {
+      "id": "BL02",
+      "category": "Invalid or negative values",
+      "title": "Negative amount in send money reverses the transfer and drains other users",
+      "affected_feature": "Send money",
+      "workflow_step": "Customer enters an amount",
+      "business_rule_violated": "Transfers move value from sender to recipient only, within the Rs 25,000 daily limit",
+      "attack_scenario": "1) Attacker with an empty Tier 1 account calls the send-money API with recipient = victim and amount = -10000. 2) The daily limit test (total <= Rs 25,000) passes because the amount is negative. 3) The sender is 'debited' -Rs 10,000 (credited) and the victim is debited Rs 10,000. 4) Attacker repeats with other victims and cashes out through a colluding merchant.",
+      "business_impact": "Direct theft from other customers without their PIN or consent, and bypass of both the daily limit and the Rs 10,000 Tier 1 wallet cap.",
+      "assumption": "The description does not say the API rejects non-positive or non-integer amounts, or that send money requires a PIN.",
+      "severity": "Critical",
+      "mitigation": "Accept only positive integer paise values with a defined maximum, add CHECK (amount > 0) on the ledger table, require the wallet PIN on every transfer, and enforce the recipient's tier cap in the same DB transaction as the credit."
+    },
+    {
+      "id": "BL03",
+      "category": "Idempotency and replay",
+      "title": "Duplicate or replayed success webhook credits the same top-up repeatedly",
+      "affected_feature": "Add money",
+      "workflow_step": "Wallet is credited",
+      "business_rule_violated": "One successful payment credits the wallet exactly once",
+      "attack_scenario": "1) Customer completes a genuine Rs 5,000 UPI top-up. 2) The gateway retries the success webhook after a timeout, or the attacker replays a captured valid webhook. 3) Each delivery credits Rs 5,000 again because processed transaction IDs are not tracked. 4) Attacker spends the surplus on merchant payments.",
+      "business_impact": "Rs 5,000 of free balance per replay, limited only by the tier cap if that is enforced at credit time. Wallet ledger stops reconciling with gateway settlements, and retries cause the same loss accidentally.",
+      "assumption": "The description does not say the webhook handler deduplicates by gateway transaction ID.",
+      "severity": "High",
+      "mitigation": "Add a unique constraint on gateway_transaction_id and insert the processed-event row and the wallet credit in one DB transaction (insert-or-ignore first). Return 200 on duplicates without crediting."
+    },
+    {
+      "id": "BL04",
+      "category": "Permission and authorisation failures",
+      "title": "Merchant refunds payments owned by other merchants or above the paid amount",
+      "affected_feature": "Refunds",
+      "workflow_step": "Merchant refunds a payment from the portal",
+      "business_rule_violated": "A merchant may refund only its own payments, and never more than the amount paid",
+      "attack_scenario": "1) Colluding merchant M1 learns payment IDs of merchant M2 by enumerating sequential IDs. 2) M1 calls the refund API for M2's payment, or for its own Rs 500 payment with amount Rs 50,000. 3) The refund credits the wallet of M1's mule customer account. 4) Nightly settlement subtracts the refund from M2, or leaves M1 negative and PayLoop absorbs the loss.",
+      "business_impact": "Money moves to attacker wallets at the expense of other merchants or PayLoop. The merchant path has no stated limit, approval or audit log, so the Rs 5,000 agent control is bypassed entirely.",
+      "assumption": "The description states no ownership check against the caller's merchant, no cumulative refund cap per payment, no approval for merchant refunds, and payment IDs may be guessable.",
+      "severity": "High",
+      "mitigation": "Derive merchant_id from the JWT and require payment.merchant_id = caller in the refunds service. Lock the payment row and enforce refunded_total <= amount with a CHECK constraint. Use UUID payment IDs, log all merchant refunds, and add per-merchant daily refund limits."
+    },
+    {
+      "id": "BL05",
+      "category": "Out-of-order or skipped steps",
+      "title": "Agent skips manager approval by calling refund API directly or splitting into sub-Rs 5,000 refunds",
+      "affected_feature": "Refunds",
+      "workflow_step": "For agent refunds above Rs 5,000, a manager approves in the admin console",
+      "business_rule_violated": "Refunds above Rs 5,000 need manager approval before processing",
+      "attack_scenario": "1) A rogue support agent colludes with a customer. 2) Agent sends a Rs 40,000 refund request straight to the refunds API, skipping the console approval step, or marks it approved with their own account. 3) Alternatively agent issues eight refunds of Rs 4,999 across different payments to the same customer, each under the threshold. 4) Customer receives about Rs 40,000 with no manager sign-off.",
+      "business_impact": "Insider fraud of tens of thousands of rupees per colluding pair. The threshold works per request rather than as a cumulative control.",
+      "assumption": "Approval is enforced only in the console UI or per request, the refunds API does not verify an approved state and manager role, and approver can equal requester.",
+      "severity": "High",
+      "mitigation": "Make the refunds service state machine (REQUESTED, APPROVED, PROCESSED) the only path, with approver_id != requester_id and manager role checked server-side. Apply the Rs 5,000 limit to cumulative refunds per customer per rolling 24 hours and a per-agent daily cap."
+    },
+    {
+      "id": "BL06",
+      "category": "API misconfiguration and enforcement gaps",
+      "title": "4-digit PIN brute-forced because only a per-IP rate limit exists",
+      "affected_feature": "Pay merchant",
+      "workflow_step": "Customer confirms with a 4-digit wallet PIN (checked server-side)",
+      "business_rule_violated": "Only the wallet owner who knows the PIN may authorise a payment",
+      "attack_scenario": "1) Attacker obtains a victim's JWT (24-hour validity) from a stolen or malware-infected phone. 2) Attacker scripts payment confirmations to their own merchant QR, trying PINs 0000 to 9999. 3) At 100 requests per minute per IP across a few rotating IPs, all 10,000 combinations are tried in minutes. 4) With the PIN found, attacker drains the wallet to their merchant account.",
+      "business_impact": "Full wallet drain of up to Rs 2,00,000 per victim, customer compensation claims and regulatory complaints. The per-IP limit gives no per-account protection.",
+      "assumption": "No per-account failed-PIN counter, lockout or OTP step-up is described, and the JWT alone grants the ability to submit PIN attempts.",
+      "severity": "High",
+      "mitigation": "Count failed PIN attempts per user in the wallet service, lock for 30 minutes after 5 failures and require OTP re-verification after 10, independent of IP. Bind the PIN check to the registered device and cap payments to newly seen merchants."
+    },
+    {
+      "id": "BL07",
+      "category": "Race conditions",
+      "title": "Parallel transfers defeat the Rs 25,000 daily send limit",
+      "affected_feature": "Send money",
+      "workflow_step": "Transfer is executed between wallets",
+      "business_rule_violated": "A customer may transfer at most Rs 25,000 per day",
+      "attack_scenario": "1) Attacker has a Rs 2,00,000 Tier 2 wallet and has sent Rs 0 today. 2) Attacker fires 8 simultaneous Rs 25,000 transfers to a mule account, well under 100 requests per minute. 3) Each request reads today's total as Rs 0 and passes the check. 4) All 8 execute, moving Rs 2,00,000 in one day.",
+      "business_impact": "The daily limit is neutralised, allowing the full Tier 2 balance to be moved to mule accounts in minutes. Weakens AML velocity controls and creates regulatory exposure.",
+      "assumption": "The limit is a read of the day's total followed by a separate write, with no row lock or atomic conditional update.",
+      "severity": "High",
+      "mitigation": "Keep a per-user daily_transfer_total row updated by UPDATE ... SET total = total + :amt WHERE total + :amt <= 25000 in the same DB transaction as the debit and credit, or take SELECT ... FOR UPDATE on that row first. Define the day in a fixed timezone (IST)."
+    },
+    {
+      "id": "BL08",
+      "category": "Database atomicity",
+      "title": "Wallet debit and payment record diverge across service databases",
+      "affected_feature": "Pay merchant",
+      "workflow_step": "Payment is recorded and wallet is debited",
+      "business_rule_violated": "A payment debits the customer exactly once and is recorded for settlement exactly once",
+      "attack_scenario": "1) Customer pays Rs 2,000 to a merchant account the attacker controls. 2) The payment record is written in the payments DB, but the wallet debit fails or times out, and the attacker kills connectivity at that moment. 3) The payment record stays with no debit, or the customer is debited without a record and retries. 4) Nightly settlement pays the merchant Rs 2,000 for a payment the wallet never funded.",
+      "business_impact": "PayLoop pays out Rs 2,000 per failed debit with no matching wallet funds, or customers lose money without a delivered payment. Ledgers across wallet, payments and settlement cannot be reconciled.",
+      "assumption": "Wallet and payments each have their own PostgreSQL database and the description states no saga, outbox, two-phase commit or reconciliation job.",
+      "severity": "High",
+      "mitigation": "Make the wallet ledger the source of truth: write the debit and an outbox event in one local transaction keyed by a per-payment idempotency key, and have the payments service consume it. Generate settlement only from payments with a committed ledger debit, and reconcile daily."
+    },
+    {
+      "id": "BL09",
+      "category": "Resource exhaustion and quota abuse",
+      "title": "FIRST100 farmed through mass new-account creation",
+      "affected_feature": "Promo codes",
+      "workflow_step": "Customer applies the code to a payment",
+      "business_rule_violated": "FIRST100 pays Rs 100 cashback once per user on a first payment",
+      "attack_scenario": "1) Attacker registers 500 accounts with cheap mobile numbers, since signup needs only a number and OTP. 2) Each account tops up Rs 10 and pays a colluding merchant Rs 10 with FIRST100. 3) Each account receives Rs 100 cashback as its first payment. 4) Cashback accumulates in the wallets and is paid out through merchant settlement.",
+      "business_impact": "About Rs 45,000 of promo budget extracted for Rs 5,000 of seeded money, repeatable without limit. Marketing spend is drained and the promo cost is unbounded.",
+      "assumption": "'Once per user' is tied only to the account, there is no device, KYC or payer-merchant check, no total FIRST100 budget cap, and the 100 requests per minute per IP limit does not stop account creation across IPs.",
+      "severity": "Medium",
+      "mitigation": "Add a global budget counter for each promo with an atomic decrement, make eligibility depend on a KYC-verified identity or device fingerprint, require a minimum payment value, exclude payments to merchants linked to the payer, and hold cashback for a settlement delay."
+    },
+    {
+      "id": "BL10",
+      "category": "Sensitive data confidentiality",
+      "title": "Statement and history endpoints expose other customers' transactions",
+      "affected_feature": "Transaction history and statements",
+      "workflow_step": "Customer requests transaction history or a monthly statement",
+      "business_rule_violated": "A customer may see only their own transaction history and statements",
+      "attack_scenario": "1) Attacker logs in as a normal customer and downloads their own March PDF statement. 2) Attacker changes the user ID or statement ID in the request to sequential values. 3) The API returns other customers' statements because only the JWT's validity is checked. 4) Attacker harvests mobile numbers, counterparties and balances for thousands of users.",
+      "business_impact": "Exposure of financial transaction data and mobile numbers at scale, enabling targeted fraud and social engineering, and a data protection breach under India's DPDP Act with notification and penalty exposure.",
+      "assumption": "The description does not say endpoints check that the requested user_id or statement_id belongs to the JWT subject, and identifiers may be sequential. Audit logs also do not cover customer-facing reads.",
+      "severity": "Medium",
+      "mitigation": "Derive the user from the JWT and never accept a user ID from the client. Query statements with WHERE user_id = :jwt_user and use unguessable statement IDs or short-lived signed download URLs. Log statement downloads and alert on enumeration patterns."
+    }
+  ]
+}

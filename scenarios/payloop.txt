@@ -1,0 +1,39 @@
+PayLoop is a mobile digital wallet for small merchants and their customers in India.
+
+Users and external entities
+- Customers sign up with a mobile number and OTP. They start at KYC Tier 1
+  (wallet limit Rs 10,000) and move to Tier 2 (limit Rs 2,00,000) after
+  uploading PAN and Aadhaar, which a KYC partner API verifies.
+- Merchants onboard through a web portal and receive payouts to their bank
+  account every night.
+- Support agents use an internal admin console to issue refunds and unlock
+  accounts.
+- External services: a payment gateway for adding money by card or UPI, the
+  KYC partner API, an SMS provider for OTPs, and the merchant's bank for payouts.
+
+Key features
+1. Add money: the customer tops up the wallet through the payment gateway.
+   The gateway calls PayLoop's webhook to confirm the payment, and the wallet
+   is credited.
+2. Pay merchant: the customer scans a merchant QR code, enters an amount and
+   confirms with a 4-digit wallet PIN.
+3. Send money: customers can transfer to other PayLoop users, up to
+   Rs 25,000 per day.
+4. Promo codes: marketing creates codes such as FIRST100 (Rs 100 cashback on
+   the first payment, once per user).
+5. Refunds: merchants can refund a payment from the portal. Support agents can
+   also refund up to Rs 5,000 without approval; larger refunds need a
+   manager's approval in the admin console.
+6. Nightly settlement: a batch job totals each merchant's payments minus
+   refunds and sends the payout to their bank.
+7. Transaction history and monthly statements, downloadable as PDF.
+
+Architecture and cyber controls
+- Mobile app and merchant portal call a REST API behind an API gateway on AWS.
+- Services: wallet, payments, promotions, refunds and settlement, each with its
+  own PostgreSQL database.
+- Authentication uses JWTs that expire after 24 hours. Wallet PIN is checked
+  on the server.
+- The API gateway applies a rate limit of 100 requests per minute per IP.
+- Data is encrypted in transit (TLS 1.2) and at rest (AWS KMS).
+- Audit logs are kept for admin console actions only.
